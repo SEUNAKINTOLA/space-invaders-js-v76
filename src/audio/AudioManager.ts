@@ -1,195 +1,211 @@
-import { Howl, Howler } from 'howler';
-
 /**
- * Interface for music track configuration
+ * @file AudioManager.ts
+ * @description Audio management system for handling sound effects and background music.
+ * Implements the Singleton pattern to ensure a single point of audio control.
  */
-interface MusicTrack {
-    id: string;
-    path: string;
-    volume?: number;
+
+// Types and interfaces
+interface AudioConfig {
+  masterVolume: number;
+  musicVolume: number;
+  sfxVolume: number;
+  isMuted: boolean;
+}
+
+interface AudioTrack {
+  audio: HTMLAudioElement;
+  volume: number;
+  category: 'music' | 'sfx';
+  loop: boolean;
 }
 
 /**
- * Manages background music and audio functionality with cross-fading capability
+ * Manages all audio operations including background music and sound effects.
+ * Implements the Singleton pattern to ensure only one audio controller exists.
  */
 export class AudioManager {
-    private static instance: AudioManager;
-    private currentMusic: Howl | null = null;
-    private nextMusic: Howl | null = null;
-    private musicTracks: Map<string, Howl> = new Map();
-    private currentVolume: number = 1.0;
-    private isFading: boolean = false;
-    
-    private readonly DEFAULT_FADE_DURATION: number = 2000; // ms
-    private readonly MIN_VOLUME: number = 0;
-    private readonly MAX_VOLUME: number = 1;
+  private static instance: AudioManager;
+  
+  private readonly audioMap: Map<string, AudioTrack>;
+  private config: AudioConfig;
+  private currentMusic?: string;
+  
+  private constructor() {
+    this.audioMap = new Map();
+    this.config = {
+      masterVolume: 1,
+      musicVolume: 0.7,
+      sfxVolume: 1,
+      isMuted: false
+    };
+  }
 
-    private constructor() {
-        // Private constructor for singleton pattern
+  /**
+   * Gets the singleton instance of AudioManager
+   */
+  public static getInstance(): AudioManager {
+    if (!AudioManager.instance) {
+      AudioManager.instance = new AudioManager();
+    }
+    return AudioManager.instance;
+  }
+
+  /**
+   * Loads an audio file and stores it in the audio map
+   * @param id Unique identifier for the audio
+   * @param url URL of the audio file
+   * @param category Type of audio (music or sfx)
+   * @param loop Whether the audio should loop
+   * @throws Error if audio loading fails
+   */
+  public async loadAudio(
+    id: string,
+    url: string,
+    category: 'music' | 'sfx',
+    loop: boolean = false
+  ): Promise<void> {
+    try {
+      const audio = new Audio(url);
+      const track: AudioTrack = {
+        audio,
+        volume: category === 'music' ? this.config.musicVolume : this.config.sfxVolume,
+        category,
+        loop
+      };
+
+      audio.loop = loop;
+      this.audioMap.set(id, track);
+
+      // Ensure audio is loaded before proceeding
+      await new Promise((resolve, reject) => {
+        audio.addEventListener('canplaythrough', resolve);
+        audio.addEventListener('error', reject);
+        audio.load();
+      });
+    } catch (error) {
+      throw new Error(`Failed to load audio ${id}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Plays the specified audio track
+   * @param id Identifier of the audio to play
+   * @throws Error if audio is not found
+   */
+  public play(id: string): void {
+    const track = this.audioMap.get(id);
+    if (!track) {
+      throw new Error(`Audio track ${id} not found`);
     }
 
-    /**
-     * Gets the singleton instance of AudioManager
-     */
-    public static getInstance(): AudioManager {
-        if (!AudioManager.instance) {
-            AudioManager.instance = new AudioManager();
-        }
-        return AudioManager.instance;
+    if (track.category === 'music') {
+      this.stopCurrentMusic();
+      this.currentMusic = id;
     }
 
-    /**
-     * Loads a music track into memory
-     * @param track Music track configuration
-     * @throws Error if track loading fails
-     */
-    public async loadMusic(track: MusicTrack): Promise<void> {
-        try {
-            const music = new Howl({
-                src: [track.path],
-                loop: true,
-                volume: track.volume ?? this.currentVolume,
-                preload: true,
-            });
+    track.audio.currentTime = 0;
+    track.audio.volume = this.calculateVolume(track);
+    track.audio.play().catch(error => {
+      console.error(`Failed to play audio ${id}:`, error);
+    });
+  }
 
-            return new Promise((resolve, reject) => {
-                music.once('load', () => {
-                    this.musicTracks.set(track.id, music);
-                    resolve();
-                });
-
-                music.once('loaderror', (id, error) => {
-                    reject(new Error(`Failed to load music track: ${error}`));
-                });
-            });
-        } catch (error) {
-            throw new Error(`Error loading music track: ${error.message}`);
-        }
+  /**
+   * Stops the specified audio track
+   * @param id Identifier of the audio to stop
+   */
+  public stop(id: string): void {
+    const track = this.audioMap.get(id);
+    if (track) {
+      track.audio.pause();
+      track.audio.currentTime = 0;
+      if (id === this.currentMusic) {
+        this.currentMusic = undefined;
+      }
     }
+  }
 
-    /**
-     * Plays a music track with optional cross-fade
-     * @param trackId ID of the track to play
-     * @param fadeTime Duration of the fade in milliseconds
-     * @throws Error if track is not found
-     */
-    public async playMusic(trackId: string, fadeTime: number = this.DEFAULT_FADE_DURATION): Promise<void> {
-        const newTrack = this.musicTracks.get(trackId);
-        if (!newTrack) {
-            throw new Error(`Music track '${trackId}' not found`);
-        }
+  /**
+   * Sets the master volume level
+   * @param volume Volume level (0-1)
+   */
+  public setMasterVolume(volume: number): void {
+    this.config.masterVolume = this.clampVolume(volume);
+    this.updateAllVolumes();
+  }
 
-        if (this.isFading) {
-            return;
-        }
+  /**
+   * Sets the music volume level
+   * @param volume Volume level (0-1)
+   */
+  public setMusicVolume(volume: number): void {
+    this.config.musicVolume = this.clampVolume(volume);
+    this.updateCategoryVolumes('music');
+  }
 
-        // If there's currently playing music, cross-fade
-        if (this.currentMusic && this.currentMusic.playing()) {
-            this.nextMusic = newTrack;
-            await this.crossFade(fadeTime);
-        } else {
-            // No current music, just play the new track
-            newTrack.volume(this.currentVolume);
-            newTrack.play();
-            this.currentMusic = newTrack;
-        }
+  /**
+   * Sets the sound effects volume level
+   * @param volume Volume level (0-1)
+   */
+  public setSFXVolume(volume: number): void {
+    this.config.sfxVolume = this.clampVolume(volume);
+    this.updateCategoryVolumes('sfx');
+  }
+
+  /**
+   * Mutes/unmutes all audio
+   * @param muted Mute state
+   */
+  public setMuted(muted: boolean): void {
+    this.config.isMuted = muted;
+    this.updateAllVolumes();
+  }
+
+  /**
+   * Cleans up and removes all audio tracks
+   */
+  public dispose(): void {
+    this.audioMap.forEach(track => {
+      track.audio.pause();
+      track.audio.src = '';
+    });
+    this.audioMap.clear();
+    this.currentMusic = undefined;
+  }
+
+  // Private helper methods
+  private stopCurrentMusic(): void {
+    if (this.currentMusic) {
+      this.stop(this.currentMusic);
     }
+  }
 
-    /**
-     * Stops the current music with optional fade out
-     * @param fadeTime Duration of the fade in milliseconds
-     */
-    public async stopMusic(fadeTime: number = this.DEFAULT_FADE_DURATION): Promise<void> {
-        if (!this.currentMusic || this.isFading) {
-            return;
-        }
+  private calculateVolume(track: AudioTrack): number {
+    if (this.config.isMuted) return 0;
+    const categoryVolume = track.category === 'music' 
+      ? this.config.musicVolume 
+      : this.config.sfxVolume;
+    return this.clampVolume(this.config.masterVolume * categoryVolume);
+  }
 
-        await this.fadeOut(this.currentMusic, fadeTime);
-        this.currentMusic.stop();
-        this.currentMusic = null;
-    }
+  private clampVolume(volume: number): number {
+    return Math.max(0, Math.min(1, volume));
+  }
 
-    /**
-     * Sets the global music volume
-     * @param volume Volume level (0.0 to 1.0)
-     */
-    public setVolume(volume: number): void {
-        this.currentVolume = Math.max(this.MIN_VOLUME, Math.min(this.MAX_VOLUME, volume));
-        if (this.currentMusic) {
-            this.currentMusic.volume(this.currentVolume);
-        }
-    }
+  private updateAllVolumes(): void {
+    this.audioMap.forEach((track) => {
+      track.audio.volume = this.calculateVolume(track);
+    });
+  }
 
-    /**
-     * Performs cross-fade between current and next music tracks
-     * @param duration Duration of the cross-fade in milliseconds
-     */
-    private async crossFade(duration: number): Promise<void> {
-        if (!this.currentMusic || !this.nextMusic || this.isFading) {
-            return;
-        }
-
-        this.isFading = true;
-        const steps = 60;
-        const stepDuration = duration / steps;
-        const volumeStep = this.currentVolume / steps;
-
-        this.nextMusic.volume(0);
-        this.nextMusic.play();
-
-        return new Promise<void>((resolve) => {
-            const fadeInterval = setInterval(() => {
-                const currentVol = this.currentMusic!.volume();
-                const nextVol = this.nextMusic!.volume();
-
-                if (currentVol <= this.MIN_VOLUME) {
-                    clearInterval(fadeInterval);
-                    this.currentMusic!.stop();
-                    this.currentMusic = this.nextMusic;
-                    this.nextMusic = null;
-                    this.isFading = false;
-                    resolve();
-                    return;
-                }
-
-                this.currentMusic!.volume(currentVol - volumeStep);
-                this.nextMusic!.volume(nextVol + volumeStep);
-            }, stepDuration);
-        });
-    }
-
-    /**
-     * Fades out a music track
-     * @param track Track to fade out
-     * @param duration Duration of the fade in milliseconds
-     */
-    private async fadeOut(track: Howl, duration: number): Promise<void> {
-        const steps = 60;
-        const stepDuration = duration / steps;
-        const volumeStep = this.currentVolume / steps;
-
-        return new Promise<void>((resolve) => {
-            const fadeInterval = setInterval(() => {
-                const currentVol = track.volume();
-
-                if (currentVol <= this.MIN_VOLUME) {
-                    clearInterval(fadeInterval);
-                    resolve();
-                    return;
-                }
-
-                track.volume(currentVol - volumeStep);
-            }, stepDuration);
-        });
-    }
-
-    /**
-     * Cleans up and unloads all music tracks
-     */
-    public dispose(): void {
-        this.musicTracks.forEach(track => track.unload());
-        this.musicTracks.clear();
-        this.currentMusic = null;
-        this.nextMusic = null;
-    }
+  private updateCategoryVolumes(category: 'music' | 'sfx'): void {
+    this.audioMap.forEach((track) => {
+      if (track.category === category) {
+        track.audio.volume = this.calculateVolume(track);
+      }
+    });
+  }
 }
+
+// Export a default instance
+export default AudioManager.getInstance();
