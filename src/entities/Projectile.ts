@@ -1,115 +1,134 @@
 /**
  * @file Projectile.ts
- * @description Implements projectile entity and mechanics for shooting system
+ * @description Implements the projectile system for enemy attacks
  * @module entities/Projectile
  */
 
 import { Vector2 } from '../types/Vector2';
+import { GameObject } from '../core/GameObject';
+import { CollisionSystem } from '../systems/CollisionSystem';
+import { ProjectileConfig } from '../types/ProjectileConfig';
 
 /**
- * Configuration constants for projectile behavior
+ * Represents the state of a projectile
  */
-const PROJECTILE_CONFIG = {
-  DEFAULT_SPEED: 500,
-  DEFAULT_LIFETIME: 3000, // milliseconds
-  DEFAULT_DAMAGE: 10,
-  MIN_SPEED: 100,
-  MAX_SPEED: 2000,
-} as const;
-
-/**
- * Interface defining projectile properties
- */
-interface ProjectileOptions {
-  position: Vector2;
-  direction: Vector2;
-  speed?: number;
-  damage?: number;
-  lifetime?: number;
-  onHit?: (target: any) => void;
+export enum ProjectileState {
+  ACTIVE = 'active',
+  DESTROYED = 'destroyed',
+  EXPIRED = 'expired'
 }
 
 /**
- * Represents a projectile entity in the game
- * Handles movement, collision detection, and damage dealing
+ * Configuration constants for projectiles
  */
-export class Projectile {
-  private position: Vector2;
-  private direction: Vector2;
-  private speed: number;
+const PROJECTILE_DEFAULTS = {
+  MAX_LIFETIME: 5000, // milliseconds
+  DEFAULT_SPEED: 200,
+  DEFAULT_DAMAGE: 10
+};
+
+/**
+ * Represents a projectile entity in the game
+ * Handles movement, collision, and lifecycle of projectiles
+ */
+export class Projectile extends GameObject {
+  private velocity: Vector2;
   private damage: number;
+  private creationTime: number;
   private lifetime: number;
-  private createdAt: number;
-  private onHit?: (target: any) => void;
-  private active: boolean = true;
+  private state: ProjectileState;
 
   /**
-   * Creates a new projectile instance
-   * @param options - Configuration options for the projectile
-   * @throws {Error} If invalid position or direction is provided
+   * Creates a new Projectile instance
+   * @param config - Configuration options for the projectile
    */
-  constructor(options: ProjectileOptions) {
-    this.validateOptions(options);
+  constructor(config: ProjectileConfig) {
+    super({
+      position: config.position,
+      dimensions: config.dimensions
+    });
 
-    this.position = { ...options.position };
-    this.direction = this.normalizeDirection(options.direction);
-    this.speed = options.speed || PROJECTILE_CONFIG.DEFAULT_SPEED;
-    this.damage = options.damage || PROJECTILE_CONFIG.DEFAULT_DAMAGE;
-    this.lifetime = options.lifetime || PROJECTILE_CONFIG.DEFAULT_LIFETIME;
-    this.createdAt = Date.now();
-    this.onHit = options.onHit;
+    this.velocity = config.velocity || { x: 0, y: PROJECTILE_DEFAULTS.DEFAULT_SPEED };
+    this.damage = config.damage || PROJECTILE_DEFAULTS.DEFAULT_DAMAGE;
+    this.lifetime = config.lifetime || PROJECTILE_DEFAULTS.MAX_LIFETIME;
+    this.creationTime = Date.now();
+    this.state = ProjectileState.ACTIVE;
   }
 
   /**
-   * Updates the projectile's position and checks lifetime
+   * Updates the projectile's position and checks for lifetime expiration
    * @param deltaTime - Time elapsed since last update in seconds
-   * @returns boolean indicating if the projectile is still active
    */
-  public update(deltaTime: number): boolean {
-    if (!this.active) return false;
-
-    // Check lifetime
-    if (this.isExpired()) {
-      this.deactivate();
-      return false;
-    }
-
-    // Update position
-    this.position.x += this.direction.x * this.speed * deltaTime;
-    this.position.y += this.direction.y * this.speed * deltaTime;
-
-    return true;
-  }
-
-  /**
-   * Handles collision with a target
-   * @param target - The entity the projectile collided with
-   */
-  public handleCollision(target: any): void {
-    if (!this.active) return;
-
-    if (this.onHit) {
-      try {
-        this.onHit(target);
-      } catch (error) {
-        console.error('Error in projectile onHit callback:', error);
+  public update(deltaTime: number): void {
+    try {
+      if (this.state !== ProjectileState.ACTIVE) {
+        return;
       }
-    }
 
-    this.deactivate();
+      // Update position
+      this.position.x += this.velocity.x * deltaTime;
+      this.position.y += this.velocity.y * deltaTime;
+
+      // Check lifetime
+      if (this.hasExpired()) {
+        this.state = ProjectileState.EXPIRED;
+        this.destroy();
+      }
+    } catch (error) {
+      console.error('Error updating projectile:', error);
+      this.destroy();
+    }
   }
 
   /**
-   * Gets the current position of the projectile
-   * @returns Current position vector
+   * Handles collision with other game objects
+   * @param other - The object this projectile collided with
    */
-  public getPosition(): Vector2 {
-    return { ...this.position };
+  public onCollision(other: GameObject): void {
+    try {
+      if (this.state !== ProjectileState.ACTIVE) {
+        return;
+      }
+
+      // Handle damage application to the other object if it has health
+      if ('takeDamage' in other) {
+        (other as any).takeDamage(this.damage);
+      }
+
+      this.destroy();
+    } catch (error) {
+      console.error('Error handling projectile collision:', error);
+      this.destroy();
+    }
+  }
+
+  /**
+   * Checks if the projectile has exceeded its lifetime
+   * @returns boolean indicating if the projectile has expired
+   */
+  private hasExpired(): boolean {
+    return Date.now() - this.creationTime >= this.lifetime;
+  }
+
+  /**
+   * Destroys the projectile and marks it for removal
+   */
+  public destroy(): void {
+    this.state = ProjectileState.DESTROYED;
+    this.emit('destroyed');
+  }
+
+  /**
+   * Gets the current state of the projectile
+   * @returns The current ProjectileState
+   */
+  public getState(): ProjectileState {
+    return this.state;
   }
 
   /**
    * Gets the damage value of the projectile
-   * @returns Damage amount
+   * @returns The damage amount
    */
   public getDamage(): number {
     return this.damage;
@@ -117,58 +136,9 @@ export class Projectile {
 
   /**
    * Checks if the projectile is still active
-   * @returns Active status
+   * @returns boolean indicating if the projectile is active
    */
   public isActive(): boolean {
-    return this.active;
-  }
-
-  /**
-   * Validates constructor options
-   * @param options - Options to validate
-   * @throws {Error} If options are invalid
-   */
-  private validateOptions(options: ProjectileOptions): void {
-    if (!options.position || typeof options.position.x !== 'number' || typeof options.position.y !== 'number') {
-      throw new Error('Invalid position provided to Projectile');
-    }
-
-    if (!options.direction || typeof options.direction.x !== 'number' || typeof options.direction.y !== 'number') {
-      throw new Error('Invalid direction provided to Projectile');
-    }
-
-    if (options.speed && (options.speed < PROJECTILE_CONFIG.MIN_SPEED || options.speed > PROJECTILE_CONFIG.MAX_SPEED)) {
-      throw new Error(`Speed must be between ${PROJECTILE_CONFIG.MIN_SPEED} and ${PROJECTILE_CONFIG.MAX_SPEED}`);
-    }
-  }
-
-  /**
-   * Normalizes the direction vector to have a magnitude of 1
-   * @param direction - Direction vector to normalize
-   * @returns Normalized direction vector
-   */
-  private normalizeDirection(direction: Vector2): Vector2 {
-    const magnitude = Math.sqrt(direction.x * direction.x + direction.y * direction.y);
-    if (magnitude === 0) return { x: 1, y: 0 };
-    
-    return {
-      x: direction.x / magnitude,
-      y: direction.y / magnitude
-    };
-  }
-
-  /**
-   * Checks if the projectile has exceeded its lifetime
-   * @returns boolean indicating if the projectile has expired
-   */
-  private isExpired(): boolean {
-    return Date.now() - this.createdAt >= this.lifetime;
-  }
-
-  /**
-   * Deactivates the projectile
-   */
-  private deactivate(): void {
-    this.active = false;
+    return this.state === ProjectileState.ACTIVE;
   }
 }
