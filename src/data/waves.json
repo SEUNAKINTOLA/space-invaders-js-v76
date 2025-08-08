@@ -1,0 +1,152 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "description": "Enemy wave configurations for game",
+    "lastUpdated": "2024-01-10"
+  },
+  "wavePatterns": {
+    "basic": {
+      "name": "Basic Wave",
+      "difficulty": 1,
+      "spawnInterval": 1.5,
+      "totalEnemies": 10,
+      "formations": [
+        {
+          "type": "line",
+          "enemyCount": 5,
+          "spacing": 100,
+          "enemies": [
+            {
+              "type": "basic_enemy",
+              "health": 100,
+              "speed": 150,
+              "points": 100
+            }
+          ]
+        }
+      ]
+    },
+    "advanced": {
+      "name": "Advanced Wave",
+      "difficulty": 2,
+      "spawnInterval": 2.0,
+      "totalEnemies": 15,
+      "formations": [
+        {
+          "type": "v_formation",
+          "enemyCount": 5,
+          "spacing": 80,
+          "enemies": [
+            {
+              "type": "fast_enemy",
+              "health": 75,
+              "speed": 200,
+              "points": 150
+            }
+          ]
+        },
+        {
+          "type": "circle",
+          "enemyCount": 8,
+          "radius": 150,
+          "enemies": [
+            {
+              "type": "tank_enemy",
+              "health": 200,
+              "speed": 100,
+              "points": 200
+            }
+          ]
+        }
+      ]
+    },
+    "boss": {
+      "name": "Boss Wave",
+      "difficulty": 3,
+      "spawnInterval": 0,
+      "totalEnemies": 1,
+      "formations": [
+        {
+          "type": "single",
+          "enemyCount": 1,
+          "enemies": [
+            {
+              "type": "boss_enemy",
+              "health": 1000,
+              "speed": 75,
+              "points": 1000,
+              "special_abilities": ["shield", "rapid_fire"]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "waveSets": {
+    "level_1": {
+      "name": "Level 1",
+      "waves": ["basic", "basic", "advanced"],
+      "timeBetweenWaves": 5.0
+    },
+    "level_2": {
+      "name": "Level 2",
+      "waves": ["basic", "advanced", "advanced", "boss"],
+      "timeBetweenWaves": 4.0
+    }
+  },
+  "enemyTypes": {
+    "basic_enemy": {
+      "sprite": "basic_enemy.png",
+      "scale": 1.0,
+      "collisionRadius": 25,
+      "weaponType": "single_shot"
+    },
+    "fast_enemy": {
+      "sprite": "fast_enemy.png",
+      "scale": 0.8,
+      "collisionRadius": 20,
+      "weaponType": "rapid_shot"
+    },
+    "tank_enemy": {
+      "sprite": "tank_enemy.png",
+      "scale": 1.2,
+      "collisionRadius": 35,
+      "weaponType": "spread_shot"
+    },
+    "boss_enemy": {
+      "sprite": "boss_enemy.png",
+      "scale": 2.0,
+      "collisionRadius": 60,
+      "weaponType": "boss_weapon"
+    }
+  },
+  "formationTypes": {
+    "line": {
+      "description": "Enemies spawn in a horizontal line",
+      "parameters": {
+        "spacing": "Distance between enemies",
+        "alignment": "center"
+      }
+    },
+    "v_formation": {
+      "description": "Enemies spawn in a V shape",
+      "parameters": {
+        "spacing": "Distance between enemies",
+        "angle": 30
+      }
+    },
+    "circle": {
+      "description": "Enemies spawn in a circle",
+      "parameters": {
+        "radius": "Circle radius",
+        "startAngle": 0
+      }
+    },
+    "single": {
+      "description": "Single enemy spawn",
+      "parameters": {
+        "position": "center"
+      }
+    }
+  }
+}
