@@ -1,6 +1,6 @@
 /**
  * @file ScoreDisplay.ts
- * @description A reusable component for displaying and managing game scores
+ * @description Score display and management component for handling game scores and high scores
  * @module ScoreDisplay
  */
 
@@ -8,23 +8,16 @@
 // Types and Interfaces
 // =========================================================
 
-/**
- * Configuration options for the ScoreDisplay component
- */
-interface ScoreDisplayConfig {
-  initialScore?: number;
-  maxScore?: number;
-  minScore?: number;
-  animationDuration?: number;
+interface Score {
+  points: number;
+  playerName: string;
+  date: Date;
 }
 
-/**
- * Score update event data structure
- */
-interface ScoreUpdateEvent {
-  previousScore: number;
-  newScore: number;
-  timestamp: number;
+interface ScoreDisplayConfig {
+  maxHighScores: number;
+  animationDuration: number;
+  storageKey: string;
 }
 
 // =========================================================
@@ -32,190 +25,231 @@ interface ScoreUpdateEvent {
 // =========================================================
 
 const DEFAULT_CONFIG: ScoreDisplayConfig = {
-  initialScore: 0,
-  maxScore: Number.MAX_SAFE_INTEGER,
-  minScore: 0,
+  maxHighScores: 10,
   animationDuration: 500,
+  storageKey: 'gameHighScores'
 };
 
 // =========================================================
 // Main Class
 // =========================================================
 
-/**
- * ScoreDisplay class handles the display and management of game scores
- */
 export class ScoreDisplay {
   private currentScore: number;
-  private readonly config: Required<ScoreDisplayConfig>;
+  private highScores: Score[];
+  private readonly config: ScoreDisplayConfig;
   private element: HTMLElement | null;
-  private observers: ((event: ScoreUpdateEvent) => void)[];
+  private animationFrame: number | null;
 
   /**
    * Creates a new ScoreDisplay instance
-   * @param config - Configuration options for the score display
+   * @param containerId - ID of the container element
+   * @param config - Optional configuration options
    */
-  constructor(config: ScoreDisplayConfig = {}) {
+  constructor(
+    private readonly containerId: string,
+    config: Partial<ScoreDisplayConfig> = {}
+  ) {
+    this.currentScore = 0;
+    this.highScores = [];
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.currentScore = this.config.initialScore;
     this.element = null;
-    this.observers = [];
+    this.animationFrame = null;
     
-    this.validateConfig();
+    this.initialize();
   }
 
   /**
-   * Initializes the score display element
-   * @param container - The container element to mount the score display
-   * @throws Error if container is not a valid HTML element
+   * Initializes the score display
+   * @private
    */
-  public initialize(container: HTMLElement): void {
+  private initialize(): void {
     try {
-      this.element = document.createElement('div');
-      this.element.className = 'score-display';
-      this.updateDisplay();
-      container.appendChild(this.element);
+      this.element = document.getElementById(this.containerId);
+      if (!this.element) {
+        throw new Error(`Container element with ID '${this.containerId}' not found`);
+      }
+
+      this.loadHighScores();
+      this.render();
     } catch (error) {
-      throw new Error(`Failed to initialize score display: ${error.message}`);
+      console.error('Failed to initialize ScoreDisplay:', error);
     }
   }
 
   /**
-   * Updates the score value
-   * @param newScore - The new score value
-   * @returns boolean indicating success of the operation
+   * Updates the current score
+   * @param points - Points to add to current score
    */
-  public updateScore(newScore: number): boolean {
-    if (!this.isValidScore(newScore)) {
-      console.warn(`Invalid score value: ${newScore}`);
+  public updateScore(points: number): void {
+    try {
+      this.currentScore += points;
+      this.animateScoreChange(points);
+      this.render();
+    } catch (error) {
+      console.error('Error updating score:', error);
+    }
+  }
+
+  /**
+   * Adds a new high score
+   * @param playerName - Name of the player
+   * @returns boolean indicating if it's a new high score
+   */
+  public submitScore(playerName: string): boolean {
+    try {
+      const newScore: Score = {
+        points: this.currentScore,
+        playerName,
+        date: new Date()
+      };
+
+      const isHighScore = this.isNewHighScore(this.currentScore);
+      if (isHighScore) {
+        this.highScores.push(newScore);
+        this.highScores.sort((a, b) => b.points - a.points);
+        this.highScores = this.highScores.slice(0, this.config.maxHighScores);
+        this.saveHighScores();
+      }
+
+      return isHighScore;
+    } catch (error) {
+      console.error('Error submitting score:', error);
       return false;
     }
-
-    const previousScore = this.currentScore;
-    this.currentScore = newScore;
-    
-    this.notifyObservers({
-      previousScore,
-      newScore,
-      timestamp: Date.now(),
-    });
-
-    this.updateDisplay();
-    return true;
   }
 
   /**
-   * Increments the current score by the specified amount
-   * @param amount - Amount to increment (defaults to 1)
-   * @returns boolean indicating success of the operation
+   * Checks if the given score qualifies as a high score
+   * @param score - Score to check
+   * @private
    */
-  public increment(amount: number = 1): boolean {
-    return this.updateScore(this.currentScore + amount);
-  }
-
-  /**
-   * Decrements the current score by the specified amount
-   * @param amount - Amount to decrement (defaults to 1)
-   * @returns boolean indicating success of the operation
-   */
-  public decrement(amount: number = 1): boolean {
-    return this.updateScore(this.currentScore - amount);
-  }
-
-  /**
-   * Registers an observer for score updates
-   * @param observer - Callback function to be called on score updates
-   */
-  public addObserver(observer: (event: ScoreUpdateEvent) => void): void {
-    this.observers.push(observer);
-  }
-
-  /**
-   * Returns the current score value
-   * @returns current score
-   */
-  public getCurrentScore(): number {
-    return this.currentScore;
-  }
-
-  /**
-   * Destroys the score display component and cleans up resources
-   */
-  public destroy(): void {
-    if (this.element && this.element.parentNode) {
-      this.element.parentNode.removeChild(this.element);
-    }
-    this.element = null;
-    this.observers = [];
-  }
-
-  // =========================================================
-  // Private Methods
-  // =========================================================
-
-  /**
-   * Validates the configuration options
-   * @throws Error if configuration is invalid
-   */
-  private validateConfig(): void {
-    if (this.config.maxScore < this.config.minScore) {
-      throw new Error('maxScore cannot be less than minScore');
-    }
-
-    if (this.config.initialScore < this.config.minScore || 
-        this.config.initialScore > this.config.maxScore) {
-      throw new Error('initialScore must be between minScore and maxScore');
-    }
-  }
-
-  /**
-   * Checks if a score value is valid according to configuration
-   * @param score - Score value to validate
-   * @returns boolean indicating if score is valid
-   */
-  private isValidScore(score: number): boolean {
+  private isNewHighScore(score: number): boolean {
     return (
-      !isNaN(score) &&
-      score >= this.config.minScore &&
-      score <= this.config.maxScore
+      this.highScores.length < this.config.maxHighScores ||
+      score > this.highScores[this.highScores.length - 1].points
     );
   }
 
   /**
-   * Updates the display element with the current score
+   * Animates score changes
+   * @param change - Point change to animate
+   * @private
    */
-  private updateDisplay(): void {
-    if (this.element) {
-      this.element.textContent = this.currentScore.toString();
-      this.animateUpdate();
+  private animateScoreChange(change: number): void {
+    if (this.animationFrame) {
+      cancelAnimationFrame(this.animationFrame);
     }
-  }
 
-  /**
-   * Animates the score update
-   */
-  private animateUpdate(): void {
-    if (this.element) {
-      this.element.classList.add('score-updated');
-      setTimeout(() => {
-        this.element?.classList.remove('score-updated');
-      }, this.config.animationDuration);
-    }
-  }
+    const startTime = performance.now();
+    const animate = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / this.config.animationDuration, 1);
 
-  /**
-   * Notifies all observers of a score update
-   * @param event - Score update event data
-   */
-  private notifyObservers(event: ScoreUpdateEvent): void {
-    this.observers.forEach(observer => {
-      try {
-        observer(event);
-      } catch (error) {
-        console.error('Error in score observer:', error);
+      if (progress < 1) {
+        this.animationFrame = requestAnimationFrame(animate);
       }
-    });
+
+      this.renderScoreChange(change, progress);
+    };
+
+    this.animationFrame = requestAnimationFrame(animate);
+  }
+
+  /**
+   * Renders the score display
+   * @private
+   */
+  private render(): void {
+    if (!this.element) return;
+
+    this.element.innerHTML = `
+      <div class="score-container">
+        <div class="current-score">Score: ${this.currentScore}</div>
+        <div class="high-scores">
+          <h3>High Scores</h3>
+          ${this.renderHighScores()}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Renders high scores list
+   * @private
+   */
+  private renderHighScores(): string {
+    return this.highScores
+      .map((score, index) => `
+        <div class="high-score-entry">
+          ${index + 1}. ${score.playerName}: ${score.points}
+          <span class="date">${score.date.toLocaleDateString()}</span>
+        </div>
+      `)
+      .join('');
+  }
+
+  /**
+   * Renders score change animation
+   * @private
+   */
+  private renderScoreChange(change: number, progress: number): void {
+    const scoreChange = document.createElement('div');
+    scoreChange.className = 'score-change';
+    scoreChange.textContent = change > 0 ? `+${change}` : `${change}`;
+    scoreChange.style.opacity = (1 - progress).toString();
+    
+    this.element?.appendChild(scoreChange);
+  }
+
+  /**
+   * Loads high scores from local storage
+   * @private
+   */
+  private loadHighScores(): void {
+    try {
+      const stored = localStorage.getItem(this.config.storageKey);
+      if (stored) {
+        this.highScores = JSON.parse(stored).map((score: any) => ({
+          ...score,
+          date: new Date(score.date)
+        }));
+      }
+    } catch (error) {
+      console.error('Error loading high scores:', error);
+      this.highScores = [];
+    }
+  }
+
+  /**
+   * Saves high scores to local storage
+   * @private
+   */
+  private saveHighScores(): void {
+    try {
+      localStorage.setItem(this.config.storageKey, JSON.stringify(this.highScores));
+    } catch (error) {
+      console.error('Error saving high scores:', error);
+    }
+  }
+
+  /**
+   * Resets the current score to zero
+   */
+  public reset(): void {
+    this.currentScore = 0;
+    this.render();
+  }
+
+  /**
+   * Cleans up resources
+   */
+  public destroy(): void {
+    if (this.animationFrame) {
+      cancelAnimationFrame(this.animationFrame);
+    }
+    if (this.element) {
+      this.element.innerHTML = '';
+    }
   }
 }
-
-export default ScoreDisplay;
