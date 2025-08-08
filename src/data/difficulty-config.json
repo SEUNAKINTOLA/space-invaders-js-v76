@@ -1,0 +1,176 @@
+"""
+difficulty_config.py
+
+Manages game difficulty progression configuration and rules.
+Provides functionality to load, validate, and retrieve difficulty settings
+based on game progression.
+
+Usage:
+    config = DifficultyConfig.load_from_file('difficulty-config.json')
+    current_difficulty = config.get_difficulty_for_level(player_level)
+"""
+
+import json
+from typing import Dict, Any, Optional
+from pathlib import Path
+import logging
+from dataclasses import dataclass
+from enum import Enum
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class DifficultyLevel(Enum):
+    """Enumeration of available difficulty levels"""
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+    EXPERT = "expert"
+
+@dataclass
+class DifficultySettings:
+    """Represents difficulty settings for a specific game stage"""
+    enemy_speed: float
+    enemy_health: int
+    spawn_rate: float
+    reward_multiplier: float
+
+class ConfigValidationError(Exception):
+    """Raised when configuration validation fails"""
+    pass
+
+class DifficultyConfig:
+    """
+    Manages game difficulty configuration and progression rules.
+    
+    Attributes:
+        _config (Dict): The loaded configuration data
+        _difficulty_cache (Dict): Cache for computed difficulty settings
+    """
+
+    DEFAULT_CONFIG_PATH = "src/data/difficulty-config.json"
+    
+    def __init__(self):
+        self._config: Dict[str, Any] = {}
+        self._difficulty_cache: Dict[int, DifficultySettings] = {}
+
+    @classmethod
+    def load_from_file(cls, file_path: Optional[str] = None) -> 'DifficultyConfig':
+        """
+        Loads difficulty configuration from a JSON file.
+        
+        Args:
+            file_path: Path to the configuration file. Uses default if None.
+            
+        Returns:
+            DifficultyConfig: Initialized configuration object
+            
+        Raises:
+            FileNotFoundError: If configuration file doesn't exist
+            ConfigValidationError: If configuration is invalid
+        """
+        config = cls()
+        path = file_path or cls.DEFAULT_CONFIG_PATH
+
+        try:
+            with open(Path(path), 'r') as f:
+                config._config = json.load(f)
+            
+            config._validate_config()
+            logger.info(f"Successfully loaded difficulty configuration from {path}")
+            return config
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse configuration file: {e}")
+            raise ConfigValidationError(f"Invalid JSON in configuration file: {e}")
+        except FileNotFoundError:
+            logger.error(f"Configuration file not found: {path}")
+            raise
+
+    def _validate_config(self) -> None:
+        """
+        Validates the loaded configuration data.
+        
+        Raises:
+            ConfigValidationError: If configuration is invalid
+        """
+        required_fields = {'base_settings', 'progression_rules', 'level_thresholds'}
+        
+        if not all(field in self._config for field in required_fields):
+            missing = required_fields - self._config.keys()
+            raise ConfigValidationError(f"Missing required fields: {missing}")
+
+        # Validate base settings
+        self._validate_difficulty_settings(self._config['base_settings'])
+
+    def _validate_difficulty_settings(self, settings: Dict[str, Any]) -> None:
+        """
+        Validates difficulty settings structure.
+        
+        Args:
+            settings: Dictionary containing difficulty settings
+            
+        Raises:
+            ConfigValidationError: If settings are invalid
+        """
+        required_settings = {'enemy_speed', 'enemy_health', 'spawn_rate', 'reward_multiplier'}
+        
+        if not all(setting in settings for setting in required_settings):
+            missing = required_settings - settings.keys()
+            raise ConfigValidationError(f"Missing required settings: {missing}")
+
+    def get_difficulty_for_level(self, level: int) -> DifficultySettings:
+        """
+        Calculates difficulty settings for a specific level.
+        
+        Args:
+            level: Current game level
+            
+        Returns:
+            DifficultySettings: Calculated difficulty settings for the level
+        """
+        # Check cache first
+        if level in self._difficulty_cache:
+            return self._difficulty_cache[level]
+
+        # Calculate difficulty based on progression rules
+        base_settings = self._config['base_settings']
+        progression = self._config['progression_rules']
+        
+        # Apply progression multipliers based on level
+        settings = DifficultySettings(
+            enemy_speed=base_settings['enemy_speed'] * (1 + progression['speed_increase_per_level'] * level),
+            enemy_health=int(base_settings['enemy_health'] * (1 + progression['health_increase_per_level'] * level)),
+            spawn_rate=base_settings['spawn_rate'] * (1 + progression['spawn_rate_increase_per_level'] * level),
+            reward_multiplier=base_settings['reward_multiplier'] * (1 + progression['reward_increase_per_level'] * level)
+        )
+        
+        # Cache the calculated settings
+        self._difficulty_cache[level] = settings
+        return settings
+
+    def get_difficulty_level(self, level: int) -> DifficultyLevel:
+        """
+        Determines the general difficulty level based on player level.
+        
+        Args:
+            level: Current game level
+            
+        Returns:
+            DifficultyLevel: The corresponding difficulty level enum
+        """
+        thresholds = self._config['level_thresholds']
+        
+        if level >= thresholds['expert']:
+            return DifficultyLevel.EXPERT
+        elif level >= thresholds['hard']:
+            return DifficultyLevel.HARD
+        elif level >= thresholds['medium']:
+            return DifficultyLevel.MEDIUM
+        else:
+            return DifficultyLevel.EASY
+
+    def reset_cache(self) -> None:
+        """Clears the difficulty settings cache"""
+        self._difficulty_cache.clear()
